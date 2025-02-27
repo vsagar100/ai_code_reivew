@@ -1,0 +1,75 @@
+import argparse
+from lib.code_review import CodeReviewer
+from lib.train_model import TrainerModule
+from lib.download_repo import GitHubDownloader
+
+def main():
+    parser = argparse.ArgumentParser(description="AI Code Reviewer Utility")
+    subparsers = parser.add_subparsers(dest='command', help="Commands: train, review")
+
+    # Train command
+    train_parser = subparsers.add_parser('train', help="Train the model using provided standards.")
+    train_parser.add_argument("--standards_file", default="standards/code_standards.yaml", help="Path to the standards YAML file")
+    train_parser.add_argument("--model_name", default="facebook/incoder-1B", help="Name of the base model to fine-tune")
+    train_parser.add_argument("--output_dir", default="./fine_tuned_model", help="Directory to save the fine-tuned model")
+
+    # Review command
+    review_parser = subparsers.add_parser('review', help="Review the code in a given file or GitHub repository.")
+    review_parser.add_argument("--model_name", default="facebook/incoder-1B", help="Name of the model to use for reviewing code")
+    review_parser.add_argument("--code_file", help="Path to the local code file to review")
+    review_parser.add_argument("--repo_url", help="URL of the GitHub repository to review")
+    review_parser.add_argument("--branch", default="main", help="Branch or tag to download from the repository")
+    review_parser.add_argument("--token", help="GitHub token to access private repositories")
+
+    args = parser.parse_args()
+
+    if args.command == "train":
+        # Initialize CodeReviewer and train the model
+        reviewer = CodeReviewer(model_name=args.model_name)
+        trainer = TrainerModule(reviewer=reviewer, standards_file=args.standards_file)
+        trainer.train_model(output_dir=args.output_dir)
+
+    elif args.command == "review":
+        # Initialize CodeReviewer for code review
+        reviewer = CodeReviewer(model_name=args.model_name)
+
+        if args.code_file:
+            # Review a local code file
+            try:
+                with open(args.code_file, 'r') as file:
+                    code = file.read()
+                    review = reviewer.review_code(code)
+                    print(f"Review for {args.code_file}:\n{review}")
+            except FileNotFoundError:
+                print(f"Error: File {args.code_file} not found.")
+            except Exception as e:
+                print(f"An error occurred during code review: {str(e)}")
+
+        elif args.repo_url:
+            # Download and review code from a GitHub repository
+            downloader = GitHubDownloader()
+            download_path = "downloaded_repo"
+            try:
+                downloader.download_repo(repo_url=args.repo_url, branch=args.branch, token=args.token, download_path=download_path)
+                print(f"Repository downloaded successfully from {args.repo_url}.")
+
+                # Assuming code files are in YAML format for simplicity
+                import glob
+                code_files = glob.glob(f"{download_path}/**/*.yml", recursive=True) + glob.glob(f"{download_path}/**/*.yaml", recursive=True)
+
+                for code_file in code_files:
+                    with open(code_file, 'r') as file:
+                        code = file.read()
+                        review = reviewer.review_code(code)
+                        print(f"Review for {code_file}:\n{review}")
+
+            except Exception as e:
+                print(f"An error occurred during repository review: {str(e)}")
+        else:
+            print("Please provide either --code_file to review a local file or --repo_url to review a GitHub repository.")
+
+    else:
+        print("Please specify a valid command. Use '--help' to see available commands.")
+
+if __name__ == "__main__":
+    main()
