@@ -1,0 +1,58 @@
+import os
+import json
+import torch
+from transformers import AutoModelForCausalLM, AutoTokenizer, Trainer, TrainingArguments
+from typing import List, Dict
+
+class CodeReviewer:
+    def __init__(self, model_name: str = "facebook/incoder-1B"):
+        """
+        Initializes the code reviewer with the specified language model.
+        """
+        self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
+        self.tokenizer = AutoTokenizer.from_pretrained(model_name)
+        
+        # Add a pad token if not available
+        if self.tokenizer.pad_token is None:
+            self.tokenizer.add_special_tokens({'pad_token': '[PAD]'})
+        
+        self.model = AutoModelForCausalLM.from_pretrained(model_name)
+        self.model.resize_token_embeddings(len(self.tokenizer))
+
+        # Enable gradient checkpointing to reduce memory usage
+        self.model.gradient_checkpointing_enable()
+        self.model = self.model.to(self.device)
+
+        # Load code standards checklist
+        self.code_standards = self.load_code_standards()
+
+    def load_code_standards(self) -> Dict:
+        """
+        Loads the code standards checklist from a YAML file.
+        """
+        standards_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "standards", "code_standards.yaml")
+        with open(standards_path, 'r') as f:
+            import yaml
+            return yaml.safe_load(f)['ansible_standards']
+
+    def generate_prompt(self, code: str) -> str:
+        """
+        Generates a review prompt for the input code based on the loaded standards.
+        """
+        prompt = "You are an expert Ansible code reviewer. Review the following script thoroughly for the specified standards:\n\n"
+        for category in self.code_standards:
+            prompt += f"{category['name']}:\n"
+            prompt += f"- {category['description']}\n"
+            prompt += "Good Example:\n" + category['example']['good'] + "\n"
+            prompt += "Bad Example:\n" + category['example']['bad'] + "\n"
+        prompt += "\nHere is the code:\n"
+        return prompt + code
+
+    def review_code(self, code: str) -> str:
+        """
+        Uses the model to generate a review for the provided code.
+        """
+        prompt = self.generate_prompt(code)
+        inputs = self.tokenizer(prompt, return_tensors="pt", truncation=True, max_length=512).to(self.device)
+        output = self.model.generate(**inputs, max_length=512)
+        return self.tokenizer.decode(output[0], skip_special_tokens=True)
